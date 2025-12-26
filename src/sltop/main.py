@@ -1,7 +1,11 @@
 """Main entrypoint and UI rendering for sltop."""
 
 import datetime
+import select
+import sys
+import termios
 import time
+import tty
 from typing import List
 
 import tyro
@@ -103,12 +107,31 @@ def entrypoint(refresh: float = 1.0) -> None:
     console = Console()
     slurm_version = get_slurm_version()
 
-    with Live(console=console, screen=True, auto_refresh=False) as live:
-        while True:
-            jobs = get_jobs()
-            panel = render(jobs, slurm_version)
-            live.update(panel, refresh=True)
-            time.sleep(refresh)
+    # Setup non-blocking input if possible
+    old_settings = None
+    if sys.stdin.isatty():
+        old_settings = termios.tcgetattr(sys.stdin)
+        tty.setcbreak(sys.stdin.fileno())
+
+    try:
+        with Live(console=console, screen=True, auto_refresh=False) as live:
+            while True:
+                jobs = get_jobs()
+                panel = render(jobs, slurm_version)
+                live.update(panel, refresh=True)
+
+                if sys.stdin.isatty():
+                    rlist, _, _ = select.select([sys.stdin], [], [], refresh)
+                    if rlist:
+                        if sys.stdin.read(1).lower() == "q":
+                            break
+                else:
+                    time.sleep(refresh)
+    except KeyboardInterrupt:
+        pass  # Clean exit on Ctrl+C
+    finally:
+        if old_settings:
+            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
 
 if __name__ == "__main__":
