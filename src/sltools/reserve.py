@@ -137,7 +137,7 @@ def main(
 
     Args:
         partition: Slurm partition to use.
-        gres: generic resources request (e.g. gpu:1).
+        gres: Generic resources, e.g. GPUs.
         cpus: CPUs per task.
         mem: Memory limit.
         time_limit: Time limit for the reservation.
