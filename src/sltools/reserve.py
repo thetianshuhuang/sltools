@@ -132,6 +132,7 @@ def main(
     cpus: int = 32,
     mem: str = "128G",
     time_limit: str = "08:00:00",
+    cancel: bool = False,
 ) -> int:
     """Reserve resources via blocking job.
 
@@ -141,11 +142,30 @@ def main(
         cpus: CPUs per task.
         mem: Memory limit.
         time_limit: Time limit for the reservation.
+        cancel: Cancel the existing reservation job.
     """
     console = Console()
     user = getpass.getuser()
 
     job_info = check_existing_job(user)
+    if cancel:
+        if job_info is not None:
+            job_id, _ = job_info
+            try:
+                subprocess.check_call(["scancel", job_id])
+                console.print(f"[bold green]Cancelled job {job_id}[/bold green]")
+                return 0
+            except subprocess.CalledProcessError:
+                console.print(
+                    f"[bold red]Error: Failed to cancel job {job_id}[/bold red]"
+                )
+                return 1
+        else:
+            console.print(
+                "[bold red]Error: No reservation job found to cancel.[/bold red]"
+            )
+            return -1
+
     if job_info is not None:
         job_id, state = job_info
         if state == "PENDING":
