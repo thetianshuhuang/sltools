@@ -7,5 +7,5 @@
 ## Installation
 
 ```bash
-uv tool install --from git+github.com:thetianshuhuang/sltools.git
+uv tool install sltools --from git+https://github.com/thetianshuhuang/sltools.git
 ```
