@@ -1,16 +1,19 @@
 [project]
-name = "sltop"
+name = "sltools"
 version = "0.1.0"
-description = "A top-like queue viewer for Slurm"
+description = "A collection of Slurm tools"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "rich>=14.2.0",
     "tyro>=1.0.3",
+    "pyyaml>=6.0.0",
 ]
 
 [project.scripts]
-sltop = "sltop.main:entrypoint"
+sltop = "sltools.sltop:_cli"
+slreserve = "sltools.reserve:_cli"
+
 
 [build-system]
 requires = ["hatchling"]

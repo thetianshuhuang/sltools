@@ -1,9 +1,11 @@
-# sltop
+# sltools: A collection of Slurm tools
 
-A slightly more aesthetically pleasing version of `squeue`.
+**sltop**: A slightly more aesthetically pleasing version of `squeue`.
 
-Install using `uv`:
+**slreserve**: Reserve resources via a "blocker" job.
+
+## Installation
 
 ```bash
-uv tool install sltop
+uv tool install --from git+github.com:thetianshuhuang/sltools.git
 ```

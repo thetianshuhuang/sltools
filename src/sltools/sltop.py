@@ -19,23 +19,17 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
-from sltop.slurm import Job, get_jobs, get_slurm_version
+from .jobs import Job, get_jobs, get_slurm_version
 
 
 def format_resources(job: Job) -> str:
     """Formats the resources string for a job (e.g., 'b0 [gpu:4]' or '(Dependency)')."""
-    # If pending, show reason
     if job.job_state == "PENDING":
         reason = job.state_reason
         if reason == "None":
             return ""
         return f"({reason})"
 
-    # Otherwise show nodes and TRES
-    # Format: "b0 [gpu:4]" or just "b0" if no TRES
-
-    # TRES format from squeue: "gres/gpu:4"
-    # We want to extract "gpu:4"
     tres = job.tres_per_node
     if tres.startswith("gres/"):
         tres = tres[5:]  # remove "gres/" prefix
@@ -98,7 +92,7 @@ def render(jobs: List[Job], slurm_version: str) -> Panel:
     return Panel(content, box=box.ROUNDED, padding=0)
 
 
-def entrypoint(refresh: float = 1.0) -> None:
+def main(refresh: float = 1.0) -> int:
     """sltop: A top-like queue viewer for Slurm.
 
     Args:
@@ -133,6 +127,8 @@ def entrypoint(refresh: float = 1.0) -> None:
         if old_settings:
             termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
 
+    return 0
 
-if __name__ == "__main__":
-    tyro.cli(entrypoint)
+
+def _cli() -> int:
+    return tyro.cli(main)
