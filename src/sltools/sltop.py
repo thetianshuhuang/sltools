@@ -101,7 +101,6 @@ def main(refresh: float = 1.0) -> int:
     console = Console()
     slurm_version = get_slurm_version()
 
-    # Setup non-blocking input if possible
     old_settings = None
     if sys.stdin.isatty():
         old_settings = termios.tcgetattr(sys.stdin)
