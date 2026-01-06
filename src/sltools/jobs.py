@@ -79,24 +79,40 @@ def get_jobs() -> list[Job]:
 def sort_jobs(jobs: list[Job]) -> list[Job]:
     """Sorts jobs according to the following logic:
 
-    1. State: Pending before Running.
-    2. Running: Increasing execution time (Youngest first).
-    3. Pending: Decreasing Job ID (Newest first).
+    1. Running jobs, in decreasing order of execution time (Longest running first).
+    2. Pending jobs waiting for resources (Reason: Resources).
+    3. Pending jobs with reason Priority.
+    4. Pending jobs with reason Dependency.
+    5. Failed/Cancelled/Other.
     """
-    pending_jobs = [j for j in jobs if j.job_state == "PENDING"]
-    running_jobs = [j for j in jobs if j.job_state == "RUNNING"]
-    other_jobs = [j for j in jobs if j.job_state not in ("PENDING", "RUNNING")]
+    running_jobs = []
+    resource_jobs = []
+    priority_jobs = []
+    dependency_jobs = []
+    other_jobs = []
 
-    # Sort Pending by Job ID descending
-    pending_jobs.sort(key=lambda j: j.job_id, reverse=True)
+    for j in jobs:
+        if j.job_state == "RUNNING":
+            running_jobs.append(j)
+        elif j.state_reason == "Resources":
+            resource_jobs.append(j)
+        elif j.state_reason == "Priority":
+            priority_jobs.append(j)
+        elif j.state_reason == "Dependency":
+            dependency_jobs.append(j)
+        else:
+            other_jobs.append(j)
 
-    # Sort Running by Start Time descending (Youngest first)
-    running_jobs.sort(key=lambda j: j.start_time, reverse=True)
+    # 1. Running jobs: Decreasing execution time (Longest running first) -> Ascending start_time
+    running_jobs.sort(key=lambda j: j.start_time)
 
-    # Sort others by ID ?
-    other_jobs.sort(key=lambda j: j.job_id, reverse=True)
+    # For pending categories, stick to Job ID descending (Newest first) as a secondary sort
+    resource_jobs.sort(key=lambda j: j.job_id)
+    priority_jobs.sort(key=lambda j: j.job_id)
+    dependency_jobs.sort(key=lambda j: j.job_id)
+    other_jobs.sort(key=lambda j: j.job_id)
 
-    return pending_jobs + running_jobs + other_jobs
+    return running_jobs + resource_jobs + priority_jobs + dependency_jobs + other_jobs
 
 
 def get_slurm_version() -> str:
