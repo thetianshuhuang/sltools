@@ -21,6 +21,8 @@ class Job:
     nodelist: str
     tres_per_node: str
     state_reason: str
+    cpus: int
+    memory: int  # Total memory in MB
 
     @property
     def time_used(self) -> str:
@@ -31,6 +33,35 @@ class Job:
         now = int(time.time())
         diff = now - self.start_time
         return str(datetime.timedelta(seconds=diff))
+
+    def get_resources_per_node(self) -> dict:
+        """Parses tres_per_node into a dictionary {type: count}.
+
+        Examples:
+            "gpu:4" -> {'gpu': 4}
+            "cpu:8,gpu:1" -> {'cpu': 8, 'gpu': 1}
+        """
+        if not self.tres_per_node:
+            return {}
+
+        res = {}
+        # remove "gres/" prefix if present (common in some slurm versions/configs)
+        tres_str = self.tres_per_node
+        if tres_str.startswith("gres/"):
+            tres_str = tres_str[5:]
+
+        parts = tres_str.split(",")
+        for part in parts:
+            if ":" in part:
+                # key:val or key:type:val
+                sub = part.split(":")
+                key = sub[0]
+                try:
+                    val = int(sub[-1])
+                    res[key] = val
+                except ValueError:
+                    pass
+        return res
 
 
 def get_jobs() -> list[Job]:
@@ -54,10 +85,19 @@ def get_jobs() -> list[Job]:
         ):
             state = j["job_state"][0]
 
-        # Start time
-        start_time = 0
         if "start_time" in j and isinstance(j["start_time"], dict):
             start_time = j["start_time"].get("number", 0)
+
+        # CPUs
+        cpus = 0
+        if "cpus" in j and isinstance(j["cpus"], dict):
+            cpus = j["cpus"].get("number", 0)
+
+        # Memory from tres_alloc_str (e.g., mem=720000M)
+        memory = 0
+        tres_alloc = j.get("tres_alloc_str", "")
+        if tres_alloc:
+            memory = _parse_memory_from_tres(tres_alloc)
 
         job = Job(
             job_id=j.get("job_id", 0),
@@ -70,6 +110,8 @@ def get_jobs() -> list[Job]:
             nodelist=j.get("nodes", ""),
             tres_per_node=j.get("tres_per_node", ""),
             state_reason=j.get("state_reason", ""),
+            cpus=cpus,
+            memory=memory,
         )
         jobs.append(job)
 
@@ -113,6 +155,47 @@ def sort_jobs(jobs: list[Job]) -> list[Job]:
     other_jobs.sort(key=lambda j: j.job_id)
 
     return running_jobs + resource_jobs + priority_jobs + dependency_jobs + other_jobs
+
+
+def expand_nodelist(nodelist: str) -> list[str]:
+    """Expands a Slurm nodelist string into a list of node names."""
+    if not nodelist:
+        return []
+    try:
+        # Use scontrol to expand (robust standard way)
+        output = subprocess.check_output(
+            ["scontrol", "show", "hostnames", nodelist], text=True
+        )
+        return output.strip().splitlines()
+    except Exception:
+        return []
+
+
+def _parse_memory_from_tres(tres_str: str) -> int:
+    """Parses memory from a TRES string (e.g. cpu=96,mem=720000M,...) -> MB."""
+    # Look for mem=...
+    # simple split implementation
+    try:
+        parts = tres_str.split(",")
+        for part in parts:
+            if part.startswith("mem="):
+                val_str = part[4:]  # remove "mem="
+                unit = val_str[-1].upper()
+                if unit.isdigit():
+                    return int(val_str)  # Default MB
+
+                number = float(val_str[:-1])
+                if unit == "M":
+                    return int(number)
+                elif unit == "G":
+                    return int(number * 1024)
+                elif unit == "T":
+                    return int(number * 1024 * 1024)
+                elif unit == "K":
+                    return int(number / 1024)
+    except Exception:
+        pass
+    return 0
 
 
 def get_slurm_version() -> str:
