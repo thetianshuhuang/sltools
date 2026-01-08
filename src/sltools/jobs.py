@@ -136,7 +136,7 @@ def sort_jobs(jobs: list[Job]) -> list[Job]:
         else:
             category = j.state_reason
 
-        if category not in jobs:
+        if category not in job_categories:
             job_categories[category] = []
         job_categories[category].append(j)
 
