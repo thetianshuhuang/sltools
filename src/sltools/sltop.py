@@ -109,10 +109,13 @@ def calculate_node_usage(nodes: List[Node], jobs: List[Job]) -> dict:
 def render_node_section(nodes: List[Node], usage_data: dict) -> Table:
     """Renders the reserved resources section."""
     table = Table(box=None, padding=(0, 1), show_lines=False, expand=True)
-    table.add_column("NODE", style="bold white", no_wrap=True)
+    table.add_column("", style="bold white", no_wrap=True)
     table.add_column("GPU", ratio=1)
+    table.add_column("", style="white dim", no_wrap=True)
     table.add_column("CPU", ratio=1)
+    table.add_column("", style="white dim", no_wrap=True)
     table.add_column("MEM", ratio=1)
+    table.add_column("", style="white dim", no_wrap=True)
 
     for node in nodes:
         u = usage_data.get(node.name, {"cpus": {}, "gpus": {}, "memory": {}})
@@ -125,22 +128,23 @@ def render_node_section(nodes: List[Node], usage_data: dict) -> Table:
         mem_total_gb = node.memory // 1000
         mem_used_gb = mem_used // 1000
 
-        def make_cell(total: int, used: int, color: str, units: str = "") -> Table:
-            """Creates a cell with bar and text stats."""
-            grid = Table.grid(expand=True)
-            grid.add_column(ratio=1)
-            grid.add_column(justify="right", width=10)
-
-            bar = Bar(size=total, begin=0, end=used, width=None, color=color)
+        def make_cell(total: int, used: int, color: str, units: str = ""):
+            bar = Bar(
+                size=total,
+                begin=0,
+                end=used,
+                width=None,
+                color=color,
+                bgcolor="bright_black",
+            )
             stats = Text(f"{used}/{total}{units}", style="white dim")
-            grid.add_row(bar, stats)
-            return grid
+            return bar, stats
 
         table.add_row(
             node.name,
-            make_cell(node.gpus, gpu_used, "cyan"),
-            make_cell(node.cpus, cpu_used, "magenta"),
-            make_cell(mem_total_gb, mem_used_gb, "green", units="G"),
+            *make_cell(node.gpus, gpu_used, "cyan"),
+            *make_cell(node.cpus, cpu_used, "magenta"),
+            *make_cell(mem_total_gb, mem_used_gb, "green", units="G"),
         )
 
     return table
@@ -148,7 +152,6 @@ def render_node_section(nodes: List[Node], usage_data: dict) -> Table:
 
 def render(jobs: List[Job], nodes: List[Node], slurm_version: str) -> Panel:
     """Renders the list of jobs into a Rich Panel."""
-
     # 1. Top Section Header
     now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     header_grid = Table.grid(expand=True)

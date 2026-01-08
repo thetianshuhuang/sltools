@@ -26,7 +26,7 @@ class Job:
 
     @property
     def time_used(self) -> str:
-        """Returns the time used by the job formatted as H:MM:SS, or 0:00 if not running."""
+        """Returns the time used by the job formatted as H:MM:SS."""
         if self.job_state != "RUNNING":
             return "-"
 
@@ -127,34 +127,35 @@ def sort_jobs(jobs: list[Job]) -> list[Job]:
     4. Pending jobs with reason Dependency.
     5. Failed/Cancelled/Other.
     """
-    running_jobs = []
-    resource_jobs = []
-    priority_jobs = []
-    dependency_jobs = []
-    other_jobs = []
+    jobs.sort(key=lambda j: j.job_id)
 
+    job_categories = {}
     for j in jobs:
         if j.job_state == "RUNNING":
-            running_jobs.append(j)
-        elif j.state_reason == "Resources":
-            resource_jobs.append(j)
-        elif j.state_reason == "Priority":
-            priority_jobs.append(j)
-        elif j.state_reason == "Dependency":
-            dependency_jobs.append(j)
+            category = "RUNNING"
         else:
-            other_jobs.append(j)
+            category = j.state_reason
 
-    # 1. Running jobs: Decreasing execution time (Longest running first) -> Ascending start_time
-    running_jobs.sort(key=lambda j: j.start_time)
+        if category not in jobs:
+            job_categories[category] = []
+        job_categories[category].append(j)
 
-    # For pending categories, stick to Job ID descending (Newest first) as a secondary sort
-    resource_jobs.sort(key=lambda j: j.job_id)
-    priority_jobs.sort(key=lambda j: j.job_id)
-    dependency_jobs.sort(key=lambda j: j.job_id)
-    other_jobs.sort(key=lambda j: j.job_id)
+    sorted_jobs = (
+        sorted(job_categories.pop("RUNNING", []), key=lambda j: j.start_time)
+        + job_categories.pop("Resources", [])
+        + job_categories.pop("Priority", [])
+    )
 
-    return running_jobs + resource_jobs + priority_jobs + dependency_jobs + other_jobs
+    for k in job_categories:
+        if "qos" in k.lower():
+            sorted_jobs += job_categories.pop(k)
+
+    sorted_jobs += job_categories.pop("Dependency", [])
+
+    for k, v in job_categories.items():
+        sorted_jobs += v
+
+    return sorted_jobs
 
 
 def expand_nodelist(nodelist: str) -> list[str]:
@@ -173,6 +174,7 @@ def expand_nodelist(nodelist: str) -> list[str]:
 
 def _parse_memory_from_tres(tres_str: str) -> int:
     """Parses memory from a TRES string (e.g. cpu=96,mem=720000M,...) -> MB."""
+    units = {"M": 1, "G": 1024, "T": 1024 * 1024, "K": 1 / 1024}
     # Look for mem=...
     # simple split implementation
     try:
@@ -184,15 +186,7 @@ def _parse_memory_from_tres(tres_str: str) -> int:
                 if unit.isdigit():
                     return int(val_str)  # Default MB
 
-                number = float(val_str[:-1])
-                if unit == "M":
-                    return int(number)
-                elif unit == "G":
-                    return int(number * 1024)
-                elif unit == "T":
-                    return int(number * 1024 * 1024)
-                elif unit == "K":
-                    return int(number / 1024)
+                return int(float(val_str[:-1]) * units[unit])
     except Exception:
         pass
     return 0
