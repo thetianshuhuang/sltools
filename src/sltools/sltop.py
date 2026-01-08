@@ -20,8 +20,8 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
-from .jobs import Job, expand_nodelist, get_jobs, get_slurm_version
-from .nodes import Node, get_nodes
+from .jobs import Job, JobGroup, coalesce_jobs, get_jobs
+from .nodes import Node, expand_nodelist, get_nodes, get_slurm_version
 
 
 def format_resources(job: Job) -> str:
@@ -153,7 +153,7 @@ def render_node_section(nodes: List[Node], usage_data: dict) -> Table:
 def render(jobs: List[Job], nodes: List[Node], slurm_version: str) -> Panel:
     """Renders the list of jobs into a Rich Panel."""
     # 1. Top Section Header
-    now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now_str = datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
     header_grid = Table.grid(expand=True)
     header_grid.add_column(justify="left")
     header_grid.add_column(justify="right")
@@ -192,11 +192,19 @@ def render(jobs: List[Job], nodes: List[Node], slurm_version: str) -> Panel:
         elif job.job_state == "PENDING":
             st_code = "PD"
 
+        # Prepare display values
+        if isinstance(job, JobGroup):
+            job_id_display = job.job_id_str
+            job_name_display = job.combined_name
+        else:
+            job_id_display = str(job.job_id)
+            job_name_display = job.name
+
         table.add_row(
-            str(job.job_id),
+            escape(job_id_display),
             job.partition,
             job.user_name,
-            job.name,
+            escape(job_name_display),
             Text(st_code, style=st_style),
             job.time_used,
             escape(format_resources(job)),
@@ -214,11 +222,12 @@ def render(jobs: List[Job], nodes: List[Node], slurm_version: str) -> Panel:
     return Panel(content, box=box.ROUNDED, padding=0)
 
 
-def main(refresh: float = 1.0) -> int:
+def main(refresh: float = 1.0, merge: bool = True) -> int:
     """sltop: A top-like queue viewer for Slurm.
 
     Args:
         refresh: Refresh rate in seconds.
+        merge: Whether to merge similar jobs.
     """
     console = Console()
     slurm_version = get_slurm_version()
@@ -232,6 +241,8 @@ def main(refresh: float = 1.0) -> int:
         with Live(console=console, screen=True, auto_refresh=False) as live:
             while True:
                 jobs = get_jobs()
+                if merge:
+                    jobs = coalesce_jobs(jobs)
                 nodes = get_nodes()
                 panel = render(jobs, nodes, slurm_version)
                 live.update(panel, refresh=True)
