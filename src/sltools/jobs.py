@@ -337,7 +337,8 @@ def sort_jobs(jobs: list[Job]) -> list[Job]:
 
     for k in job_categories:
         if "qos" in k.lower():
-            sorted_jobs += job_categories.pop(k)
+            sorted_jobs += job_categories[k]
+    job_categories = {k: v for k, v in job_categories.items() if "qos" not in k.lower()}
 
     sorted_jobs += job_categories.pop("Dependency", [])
 
