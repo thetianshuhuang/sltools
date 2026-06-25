@@ -172,10 +172,10 @@ def render(jobs: List[Job], nodes: List[Node], slurm_version: str) -> Panel:
     table.add_column("ID", justify="right", style="cyan", no_wrap=True)
     table.add_column("PART", style="dim", no_wrap=True)
     table.add_column("USER", style="yellow", no_wrap=True)
-    table.add_column("NAME", no_wrap=True)
+    table.add_column("NAME", no_wrap=True, ratio=2)
     table.add_column("ST", style="bold", no_wrap=True)
     table.add_column("TIME", justify="right", no_wrap=True)
-    table.add_column("RESOURCES", no_wrap=True)
+    table.add_column("RESOURCES", no_wrap=True, ratio=1)
 
     for job in jobs:
         # Status color
@@ -222,7 +222,7 @@ def render(jobs: List[Job], nodes: List[Node], slurm_version: str) -> Panel:
     return Panel(content, box=box.ROUNDED, padding=0)
 
 
-def main(refresh: float = 1.0, merge: bool = True) -> int:
+def main(refresh: float = 1.0, merge: bool = False) -> int:
     """sltop: A top-like queue viewer for Slurm.
 
     Args:
