@@ -157,14 +157,18 @@ class JobGroup(Job):
     def job_id_str(self) -> str:
         """Returns the job IDs string, factoring out shared leading digits.
 
+        Collapses consecutive runs into dash ranges.
+
         Examples:
             [12345] -> "12345"
-            [12345, 12346, 12347] -> "1234[5,6,7]"
+            [12345, 12346, 12347] -> "1234[5-7]"
+            [12345, 12347, 12348] -> "1234[5,7-8]"
         """
         if len(self.ids) == 1:
             return str(self.ids[0])
 
-        id_strs = [str(i) for i in self.ids]
+        ids = sorted(self.ids)
+        id_strs = [str(i) for i in ids]
 
         # Longest common prefix across all ids.
         prefix_len = 0
@@ -177,7 +181,17 @@ class JobGroup(Job):
         prefix = id_strs[0][:prefix_len]
         diffs = [s[prefix_len:] for s in id_strs]
 
-        return f"{prefix}[{','.join(diffs)}]"
+        # Collapse consecutive runs of ids into dash ranges.
+        parts = []
+        i = 0
+        while i < len(ids):
+            j = i
+            while j + 1 < len(ids) and ids[j + 1] == ids[j] + 1:
+                j += 1
+            parts.append(diffs[i] if j == i else f"{diffs[i]}-{diffs[j]}")
+            i = j + 1
+
+        return f"{prefix}[{','.join(parts)}]"
 
 
 def coalesce_jobs(jobs: list[Job]) -> list[Job]:
