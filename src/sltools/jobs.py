@@ -347,8 +347,8 @@ def sort_jobs(jobs: list[Job]) -> list[Job]:
 
     1. Running jobs, in decreasing order of execution time (Longest running first).
     2. Pending jobs waiting for resources (Reason: Resources).
-    3. Pending jobs with reason Priority.
-    4. Pending jobs with reason Dependency.
+    3. Pending jobs with reason Priority, sorted by nice.
+    4. Pending jobs with reason Dependency, sorted by nice.
     5. Failed/Cancelled/Other.
     """
     jobs.sort(key=lambda j: j.job_id)
@@ -363,6 +363,10 @@ def sort_jobs(jobs: list[Job]) -> list[Job]:
         if category not in job_categories:
             job_categories[category] = []
         job_categories[category].append(j)
+
+    for category, category_jobs in job_categories.items():
+        if category != "RUNNING":
+            category_jobs.sort(key=lambda j: j.nice)
 
     sorted_jobs = (
         sorted(job_categories.pop("RUNNING", []), key=lambda j: j.start_time)
