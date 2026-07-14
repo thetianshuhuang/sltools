@@ -17,6 +17,7 @@ class Job:
     user_name: str
     job_state: str
     start_time: int
+    nice: int
     node_count: int
     nodelist: str
     tres_per_node: str
@@ -129,6 +130,7 @@ class Job:
             user_name=data.get("user_name", ""),
             job_state=state,
             start_time=start_time,
+            nice=data.get("nice", 0),
             node_count=node_count,
             nodelist=data.get("nodes", ""),
             tres_per_node=data.get("tres_per_node", ""),
