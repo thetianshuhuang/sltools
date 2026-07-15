@@ -170,7 +170,7 @@ def render(jobs: List[Job], nodes: List[Node], slurm_version: str) -> Panel:
     table = Table(box=None, padding=(0, 1), show_lines=False, expand=True)
 
     table.add_column("ID", justify="right", style="cyan", no_wrap=True)
-    table.add_column("PART/NICE", style="dim", no_wrap=True)
+    table.add_column("PART/NICE", no_wrap=True)
     table.add_column("USER", style="yellow", no_wrap=True)
     table.add_column("NAME", no_wrap=True, ratio=2)
     table.add_column("ST", style="bold", no_wrap=True)
@@ -200,13 +200,14 @@ def render(jobs: List[Job], nodes: List[Node], slurm_version: str) -> Panel:
             job_id_display = str(job.job_id)
             job_name_display = job.name
 
-        nice_style = "dim"
         if job.nice > 0:
-            nice_style = "green"
+            nice_style = "bright_green"
         elif job.nice < 0:
-            nice_style = "yellow"
+            nice_style = "bright_red"
+        else:
+            nice_style = "dim"
 
-        part_nice = Text(f"{job.partition}/", style="dim")
+        part_nice = Text(f"{job.partition}/")
         part_nice.append(str(job.nice), style=nice_style)
 
         table.add_row(
