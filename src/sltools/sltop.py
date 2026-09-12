@@ -25,7 +25,7 @@ from .nodes import Node, expand_nodelist, get_nodes, get_slurm_version
 
 
 def format_resources(job: Job) -> str:
-    """Formats the resources string for a job (e.g., 'b0 [gpu:4]' or '(Dependency)')."""
+    """Formats the resources for a job, e.g. "b0 [gpu:4]" or "(Dependency)"."""
     if job.job_state == "PENDING":
         reason = job.state_reason
         if reason == "None":
@@ -87,17 +87,14 @@ def calculate_node_usage(nodes: List[Node], jobs: List[Job]) -> dict:
 
             # Accumulate
             p = job.partition
-
             if cpus_alloc > 0:
                 usage[node_name]["cpus"][p] = (
                     usage[node_name]["cpus"].get(p, 0) + cpus_alloc
                 )
-
             if gpus_alloc > 0:
                 usage[node_name]["gpus"][p] = (
                     usage[node_name]["gpus"].get(p, 0) + gpus_alloc
                 )
-
             if mem_alloc > 0:
                 usage[node_name]["memory"][p] = (
                     usage[node_name]["memory"].get(p, 0) + mem_alloc
@@ -153,7 +150,9 @@ def render_node_section(nodes: List[Node], usage_data: dict) -> Table:
 def render(jobs: List[Job], nodes: List[Node], slurm_version: str) -> Panel:
     """Renders the list of jobs into a Rich Panel."""
     # 1. Top Section Header
-    now_str = datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    now_str = (
+        datetime.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    )
     header_grid = Table.grid(expand=True)
     header_grid.add_column(justify="left")
     header_grid.add_column(justify="right")

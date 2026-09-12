@@ -2,9 +2,31 @@
 
 import dataclasses
 import datetime
+import subprocess
 import time
 
 from . import scontrol
+
+# Fields to read from squeue, as (scontrol key, squeue field, width), so that
+# squeue output can be turned into the records `scontrol show job` returns.
+# squeue pads and truncates each field to its width, so these are generous;
+# the job name goes last, since it is the only one which may contain the "|"
+# delimiter.
+_SQUEUE_FIELDS = (
+    ("JobId", "jobid", 24),
+    ("Partition", "partition", 24),
+    ("UserId", "username", 24),
+    ("JobState", "state", 16),
+    ("StartTime", "starttime", 24),
+    ("Nice", "nice", 12),
+    ("NumNodes", "numnodes", 10),
+    ("NodeList", "nodelist", 64),
+    ("TresPerNode", "tres-per-node", 48),
+    ("Reason", "reason", 32),
+    ("NumCPUs", "numcpus", 10),
+    ("AllocTRES", "tres-alloc", 128),
+    ("JobName", "name", 256),
+)
 
 # Base states which Slurm considers finished; scontrol keeps reporting these
 # jobs for a few minutes after they complete, but squeue hides them by default.
@@ -64,7 +86,10 @@ class Job:
 
     @staticmethod
     def _parse_memory(mem_str: str) -> int:
-        """Parses a memory size such as "375G" into MB (no suffix: already MB)."""
+        """Parses a memory size such as "375G" into MB.
+
+        A value with no unit suffix is already in MB.
+        """
         units = {"K": 1 / 1024, "M": 1, "G": 1024, "T": 1024 * 1024}
         try:
             unit = mem_str[-1].upper()
@@ -135,13 +160,24 @@ class Job:
         Returns:
             A Job instance with parsed and validated data.
         """
+        state = scontrol.get(data, "JobState", "UNKNOWN")
+
+        # Older Slurm versions report the allocation as "TRES" instead, and
+        # squeue reports what a pending job *asked* for; nothing is actually
+        # allocated until the job runs.
+        tres_alloc = scontrol.get(data, "AllocTRES") or scontrol.get(
+            data, "TRES"
+        )
+        if state == "PENDING":
+            tres_alloc = ""
+
         return cls(
             job_id=Job._parse_job_id(scontrol.get(data, "JobId")),
             partition=scontrol.get(data, "Partition"),
             name=scontrol.get(data, "JobName"),
             # "UserId=alice(1000)" -> "alice"
             user_name=scontrol.get(data, "UserId").split("(")[0],
-            job_state=scontrol.get(data, "JobState", "UNKNOWN"),
+            job_state=state,
             start_time=scontrol.get_time(data, "StartTime"),
             nice=scontrol.get_int(data, "Nice"),
             node_count=scontrol.get_int(data, "NumNodes"),
@@ -149,8 +185,7 @@ class Job:
             tres_per_node=scontrol.get(data, "TresPerNode"),
             state_reason=scontrol.get(data, "Reason", "None"),
             cpus=scontrol.get_int(data, "NumCPUs"),
-            # Older Slurm versions report the allocation as "TRES" instead.
-            tres_alloc=scontrol.get(data, "AllocTRES") or scontrol.get(data, "TRES"),
+            tres_alloc=tres_alloc,
         )
 
 
@@ -217,17 +252,15 @@ def coalesce_jobs(jobs: list[Job]) -> list[Job]:
 
     coalesced = []
 
-    # We will iterate and maintain a 'current_group' which is either a Job or JobGroup
-    # Actually, let's process linearly
+    # Iterate linearly, maintaining a 'current_group' which is either a Job or
+    # a JobGroup.
 
     current_group = None
 
     for job in jobs:
         if current_group is None:
-            # Start a potential new group (initially just the job itself)
-            # We wrap it in JobGroup only when merging? Or always work with Job/JobGroup union?
-            # To be safe, let's keep it simplest: current_group is a JobGroup candidate
-            # But we don't convert until we merge.
+            # Start a potential new group (initially just the job itself);
+            # it is only converted to a JobGroup once something merges into it.
             current_group = job
             continue
 
@@ -254,9 +287,11 @@ def coalesce_jobs(jobs: list[Job]) -> list[Job]:
             res = _get_smart_diff(name1, name2)
             if res:
                 prefix, diff1, diff2, suffix = res
-                L = len(name2)
-                D = len(diff2)
-                if (D < (L // 4)) or ((D < 5) and (D < (L // 2))):
+                length = len(name2)
+                diff_len = len(diff2)
+                if (diff_len < (length // 4)) or (
+                    (diff_len < 5) and (diff_len < (length // 2))
+                ):
                     if not isinstance(current_group, JobGroup):
                         current_group = JobGroup(current_group)
 
@@ -265,7 +300,9 @@ def coalesce_jobs(jobs: list[Job]) -> list[Job]:
                     if diff1.startswith("[") and diff1.endswith("]"):
                         existing_diffs = diff1[1:-1]  # "a,b"
                         new_diffs = f"{existing_diffs},{diff2}"
-                        current_group.combined_name = f"{prefix}[{new_diffs}]{suffix}"
+                        current_group.combined_name = (
+                            f"{prefix}[{new_diffs}]{suffix}"
+                        )
                     else:
                         current_group.combined_name = (
                             f"{prefix}[{diff1},{diff2}]{suffix}"
@@ -305,7 +342,8 @@ def _get_smart_diff(s1: str, s2: str) -> tuple[str, str, str, str] | None:
     rem2 = len(s2) - prefix_len
 
     while (
-        suffix_len < min(rem1, rem2) and s1[-(suffix_len + 1)] == s2[-(suffix_len + 1)]
+        suffix_len < min(rem1, rem2)
+        and s1[-(suffix_len + 1)] == s2[-(suffix_len + 1)]
     ):
         suffix_len += 1
 
@@ -324,7 +362,7 @@ def _get_smart_diff(s1: str, s2: str) -> tuple[str, str, str, str] | None:
             break
         current_prefix_len -= 1
 
-    # Shrink suffix (which effectively moves the boundary leftwards from the end)
+    # Shrink suffix, moving the boundary leftwards from the end
     current_suffix_len = suffix_len
     while current_suffix_len > 0:
         char = s1[len(s1) - current_suffix_len]  # First char of suffix
@@ -333,21 +371,62 @@ def _get_smart_diff(s1: str, s2: str) -> tuple[str, str, str, str] | None:
         current_suffix_len -= 1
 
     final_prefix = s1[:current_prefix_len]
-    final_suffix = s1[len(s1) - current_suffix_len :] if current_suffix_len > 0 else ""
+    final_suffix = (
+        s1[len(s1) - current_suffix_len :] if current_suffix_len > 0 else ""
+    )
 
     final_diff1 = s1[current_prefix_len : len(s1) - current_suffix_len]
     final_diff2 = s2[current_prefix_len : len(s2) - current_suffix_len]
 
-    # 4. Check that nothing is lost or malformed
-    # (The simple expansion logic should be safe but let's be sure we have a "clean" difference).
-    # We want exactly ONE difference block. Our logic forces that structure: P + D + S.
-    # But we should ensure we didn't eat too much or create overlaps?
-    # With the logic above, we strictly reduced prefix_len and suffix_len, so gaps only got bigger (good).
+    # 4. Check that nothing is lost or malformed: we want exactly ONE
+    # difference block, which the prefix + diff + suffix structure forces.
+    # Since the expansion above strictly reduced prefix_len and suffix_len, the
+    # gap can only have gotten bigger, so nothing can be eaten or overlap.
 
     return final_prefix, final_diff1, final_diff2, final_suffix
 
 
-def get_jobs(include_invalid: bool = False, partition: str | None = None) -> list[Job]:
+def _squeue_records(partition: str | None) -> list[dict[str, str]] | None:
+    """Fetches job records from squeue, in the shape scontrol.show returns.
+
+    Unlike `scontrol show job`, squeue can restrict itself to one partition,
+    and only formats the fields which are actually used. On a large cluster
+    that is the difference between seconds and milliseconds. It does however
+    need the TRES fields, which were added in Slurm 19.05.
+
+    Args:
+        partition: If set, only fetch jobs in this partition.
+
+    Returns:
+        One record per job, or None if squeue could not supply these fields.
+    """
+    # Every field but the last is suffixed with the "|" delimiter.
+    fields = [f"{field}:{width}|" for _, field, width in _SQUEUE_FIELDS]
+    fields[-1] = fields[-1].rstrip("|")
+
+    command = ["squeue", "--noheader", "--Format=" + ",".join(fields)]
+    if partition is not None:
+        command.append(f"--partition={partition}")
+
+    try:
+        output = subprocess.check_output(
+            command, text=True, stderr=subprocess.DEVNULL
+        )
+    except Exception:
+        return None
+
+    keys = [key for key, _, _ in _SQUEUE_FIELDS]
+    records = []
+    for line in output.splitlines():
+        values = line.split("|", len(keys) - 1)
+        if len(values) == len(keys):
+            records.append(dict(zip(keys, (v.strip() for v in values))))
+    return records
+
+
+def get_jobs(
+    include_invalid: bool = False, partition: str | None = None
+) -> list[Job]:
     """Fetches jobs from scontrol and calls sort_jobs.
 
     Args:
@@ -355,7 +434,11 @@ def get_jobs(include_invalid: bool = False, partition: str | None = None) -> lis
             whose dependencies can never be satisfied.
         partition: If set, only include jobs in this partition.
     """
-    jobs = [Job.from_record(r) for r in scontrol.show("job")]
+    records = _squeue_records(partition)
+    if records is None:
+        records = scontrol.show("job", contains=partition)
+
+    jobs = [Job.from_record(r) for r in records]
     jobs = [j for j in jobs if j.job_state not in _FINISHED_STATES]
     if partition is not None:
         jobs = [j for j in jobs if partition in j.partitions]
@@ -365,9 +448,11 @@ def get_jobs(include_invalid: bool = False, partition: str | None = None) -> lis
 
 
 def sort_jobs(jobs: list[Job]) -> list[Job]:
-    """Sorts jobs according to the following logic:
+    """Sorts jobs by state, then by reason and nice value.
 
-    1. Running jobs, in decreasing order of execution time (Longest running first).
+    The ordering is:
+
+    1. Running jobs, in decreasing order of execution time (longest first).
     2. Pending jobs waiting for resources (Reason: Resources).
     3. Pending jobs with reason Priority, sorted by nice.
     4. Pending jobs with reason Dependency, sorted by nice.
@@ -399,7 +484,9 @@ def sort_jobs(jobs: list[Job]) -> list[Job]:
     for k in job_categories:
         if "qos" in k.lower():
             sorted_jobs += job_categories[k]
-    job_categories = {k: v for k, v in job_categories.items() if "qos" not in k.lower()}
+    job_categories = {
+        k: v for k, v in job_categories.items() if "qos" not in k.lower()
+    }
 
     sorted_jobs += job_categories.pop("Dependency", [])
 

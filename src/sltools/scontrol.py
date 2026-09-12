@@ -36,11 +36,15 @@ def parse_record(line: str) -> dict[str, str]:
     return record
 
 
-def show(entity: str) -> list[dict[str, str]]:
+def show(entity: str, contains: str | None = None) -> list[dict[str, str]]:
     """Runs `scontrol show <entity>`, returning one record per entity.
 
     Args:
         entity: The entity to show, e.g. "job" or "node".
+        contains: If set, records which do not contain this substring are
+            dropped without being parsed. Parsing dominates the cost of this
+            function on a large cluster, so this is worth doing even though it
+            is only an approximation of the real filter.
 
     Returns:
         A list of parsed records; empty if scontrol is unavailable or failed.
@@ -55,7 +59,11 @@ def show(entity: str) -> list[dict[str, str]]:
         return []
 
     # Filter out empty records, e.g. the "No jobs in the system" message.
-    records = [parse_record(line) for line in output.splitlines()]
+    records = [
+        parse_record(line)
+        for line in output.splitlines()
+        if contains is None or contains in line
+    ]
     return [r for r in records if r]
 
 
@@ -86,6 +94,8 @@ def get_time(record: dict[str, str], key: str, default: int = 0) -> int:
     Placeholders such as `Unknown` are reported as `default`.
     """
     try:
-        return int(datetime.datetime.fromisoformat(get(record, key)).timestamp())
+        return int(
+            datetime.datetime.fromisoformat(get(record, key)).timestamp()
+        )
     except ValueError:
         return default

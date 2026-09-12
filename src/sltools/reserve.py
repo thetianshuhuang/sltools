@@ -149,10 +149,14 @@ def handle_cancel(job_info: tuple[str, str] | None, console: Console) -> int:
             console.print(f"[bold green]Cancelled job {job_id}[/bold green]")
             return 0
         except subprocess.CalledProcessError:
-            console.print(f"[bold red]Error: Failed to cancel job {job_id}[/bold red]")
+            console.print(
+                f"[bold red]Error: Failed to cancel job {job_id}[/bold red]"
+            )
             return 1
     else:
-        console.print("[bold red]Error: No reservation job found to cancel.[/bold red]")
+        console.print(
+            "[bold red]Error: No reservation job found to cancel.[/bold red]"
+        )
         return -1
 
 
@@ -180,7 +184,9 @@ def setup_node(job_id: str, console: Console) -> None:
     current_node = subprocess.check_output(["hostname"], text=True).strip()
 
     if current_node == node:
-        console.print(f"[bold green]Already on reserved node {node}.[/bold green]")
+        console.print(
+            f"[bold green]Already on reserved node {node}.[/bold green]"
+        )
         console.print(f"Setting CUDA_VISIBLE_DEVICES={gpus}")
         os.environ["CUDA_VISIBLE_DEVICES"] = gpus
         shell = os.environ.get("SHELL", "/bin/bash")
@@ -233,31 +239,36 @@ def main(
         job_id, state = job_info
         if state == "PENDING":
             console.print(
-                "[bold red]Error: A job is already queued. Please cancel this job or wait for it to run and try again.[/bold red]"
+                "[bold red]Error: A job is already queued. Please cancel "
+                "this job or wait for it to run and try again.[/bold red]"
             )
             return 1
 
-        console.print(f"[yellow]Found existing reservation job {job_id}[/yellow]")
+        console.print(
+            f"[yellow]Found existing reservation job {job_id}[/yellow]"
+        )
         expected_file = SLTOOLS_DIR / f"reserved_{job_id}.yaml"
         if not expected_file.exists():
             console.print(
-                f"[bold red]Error: Job {job_id} exists but output file {expected_file} is missing.[/bold red]"
+                f"[bold red]Error: Job {job_id} exists but output file "
+                f"{expected_file} is missing.[/bold red]"
             )
             return 1
     else:
         # Ensure SLTOOLS_DIR exists before creating script
         SLTOOLS_DIR.mkdir(parents=True, exist_ok=True)
         console.print("[bold blue]Creating new reservation...[/bold blue]")
-        script_path = create_sbatch_script(partition, gres, cpus, mem, time_limit)
-        job_id = submit_job(script_path)
-        console.print(f"Submitted job {job_id}")
-        console.print(
-            f"The reservation is saved to: {SLTOOLS_DIR / f'reserved_{job_id}.yaml'}"
+        script_path = create_sbatch_script(
+            partition, gres, cpus, mem, time_limit
         )
+        job_id = submit_job(script_path)
+        reservation_file = SLTOOLS_DIR / f"reserved_{job_id}.yaml"
+        console.print(f"Submitted job {job_id}")
+        console.print(f"The reservation is saved to: {reservation_file}")
 
     if job_id:
         setup_node(job_id, console)
-        # If setup_node returns, it means something like KeyboardInterrupt happened
+        # If setup_node returns, something like KeyboardInterrupt happened
         return 1
 
     return 0
