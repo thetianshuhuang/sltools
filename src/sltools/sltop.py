@@ -32,12 +32,8 @@ def format_resources(job: Job) -> str:
             return ""
         return f"({reason})"
 
-    tres = job.tres_per_node
-    if tres.startswith("gres/"):
-        tres = tres[5:]  # remove "gres/" prefix
-
-    if tres:
-        return f"{job.nodelist} [{tres}]"
+    if job.gres:
+        return f"{job.nodelist} [{job.gres}]"
 
     return job.nodelist
 
@@ -65,21 +61,25 @@ def calculate_node_usage(nodes: List[Node], jobs: List[Job]) -> dict:
         if num_nodes == 0:
             continue
 
-        # Determine resources used per node for this job
+        # Determine resources used per node for this job: prefer what the job
+        # explicitly requested per node, and otherwise spread its allocation
+        # (which is a total across all of its nodes) evenly over them.
         res_per_node = job.get_resources_per_node()
+        total = job.get_resources_total()
 
-        # 1. GPU: Rely on tres_per_node (GRES)
-        gpus_alloc = res_per_node.get("gpu", 0)
+        def per_node(key: str, fallback: int = 0) -> int:
+            if res_per_node.get(key, 0) > 0:
+                return res_per_node[key]
+            return max(total.get(key, 0), fallback) // num_nodes
+
+        # 1. GPU: tres_per_node (GRES), or the "gres/gpu" part of the allocation
+        gpus_alloc = per_node("gpu")
 
         # 2. CPU: explicit tres or distribute total
-        cpus_alloc = res_per_node.get("cpu", 0)
-        if cpus_alloc == 0 and job.cpus > 0:
-            cpus_alloc = job.cpus // num_nodes
+        cpus_alloc = per_node("cpu", job.cpus)
 
         # 3. Mem: explicit tres or distribute total
-        mem_alloc = res_per_node.get("mem", 0)
-        if mem_alloc == 0 and job.memory > 0:
-            mem_alloc = job.memory // num_nodes
+        mem_alloc = per_node("mem")
 
         for node_name in affected_nodes:
             if node_name not in usage:

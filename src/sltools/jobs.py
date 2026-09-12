@@ -37,12 +37,20 @@ class Job:
     tres_per_node: str
     state_reason: str
     cpus: int
-    memory: int  # Total memory in MB
+    tres_alloc: str  # Total allocated TRES, e.g. "cpu=64,mem=375G,gres/gpu=4"
 
     @property
     def partitions(self) -> list[str]:
         """Returns the partitions the job may run in."""
         return self.partition.split(",")
+
+    @property
+    def gres(self) -> str:
+        """Returns the generic resources per node, e.g. "gpu:h100:2".
+
+        Slurm prefixes these with "gres/" or "gres:" depending on the version.
+        """
+        return self.tres_per_node.removeprefix("gres/").removeprefix("gres:")
 
     @property
     def time_used(self) -> str:
@@ -55,23 +63,17 @@ class Job:
         return str(datetime.timedelta(seconds=diff))
 
     @staticmethod
-    def _parse_memory_from_tres(tres_str: str) -> int:
-        """Parses memory from a TRES string."""
-        units = {"M": 1, "G": 1024, "T": 1024 * 1024, "K": 1 / 1024}
-        # Look for mem=...
+    def _parse_memory(mem_str: str) -> int:
+        """Parses a memory size such as "375G" into MB (no suffix: already MB)."""
+        units = {"K": 1 / 1024, "M": 1, "G": 1024, "T": 1024 * 1024}
         try:
-            parts = tres_str.split(",")
-            for part in parts:
-                if part.startswith("mem="):
-                    val_str = part[4:]  # remove "mem="
-                    unit = val_str[-1].upper()
-                    if unit.isdigit():
-                        return int(val_str)  # Default MB
+            unit = mem_str[-1].upper()
+            if unit.isdigit():
+                return int(mem_str)  # Default MB
 
-                    return int(float(val_str[:-1]) * units[unit])
-        except Exception:
-            pass
-        return 0
+            return int(float(mem_str[:-1]) * units[unit])
+        except (IndexError, KeyError, ValueError):
+            return 0
 
     def get_resources_per_node(self) -> dict:
         """Parses tres_per_node into a dictionary {type: count}.
@@ -80,17 +82,8 @@ class Job:
             "gpu:4" -> {'gpu': 4}
             "cpu:8,gpu:1" -> {'cpu': 8, 'gpu': 1}
         """
-        if not self.tres_per_node:
-            return {}
-
         res = {}
-        # remove "gres/" prefix if present (common in some slurm versions/configs)
-        tres_str = self.tres_per_node
-        if tres_str.startswith("gres/"):
-            tres_str = tres_str[5:]
-
-        parts = tres_str.split(",")
-        for part in parts:
+        for part in self.gres.split(","):
             if ":" in part:
                 # key:val or key:type:val
                 sub = part.split(":")
@@ -98,6 +91,28 @@ class Job:
                 try:
                     val = int(sub[-1])
                     res[key] = val
+                except ValueError:
+                    pass
+        return res
+
+    def get_resources_total(self) -> dict:
+        """Parses tres_alloc into a dictionary {type: count} for the whole job.
+
+        Memory is converted to MB.
+
+        Examples:
+            "cpu=64,mem=375G,node=1,gres/gpu=4"
+                -> {'cpu': 64, 'mem': 384000, 'node': 1, 'gpu': 4}
+        """
+        res = {}
+        for part in self.tres_alloc.split(","):
+            key, _, val = part.partition("=")
+            key = key.rsplit("/", 1)[-1]  # "gres/gpu" -> "gpu"
+            if key == "mem":
+                res[key] = Job._parse_memory(val)
+            else:
+                try:
+                    res[key] = int(val)
                 except ValueError:
                     pass
         return res
@@ -134,8 +149,8 @@ class Job:
             tres_per_node=scontrol.get(data, "TresPerNode"),
             state_reason=scontrol.get(data, "Reason", "None"),
             cpus=scontrol.get_int(data, "NumCPUs"),
-            # Allocated TRES, e.g. "cpu=64,mem=375G,node=1,gres/gpu=4"
-            memory=Job._parse_memory_from_tres(scontrol.get(data, "AllocTRES")),
+            # Older Slurm versions report the allocation as "TRES" instead.
+            tres_alloc=scontrol.get(data, "AllocTRES") or scontrol.get(data, "TRES"),
         )
 
 
