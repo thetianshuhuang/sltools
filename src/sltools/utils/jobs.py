@@ -7,24 +7,29 @@ import time
 
 from . import scontrol
 
+# Fields are separated by the unit separator, which job names and commands
+# cannot contain, unlike any printable character.
+_SQUEUE_SEPARATOR = "\x1f"
+
 # Fields to read from squeue, as (scontrol key, squeue field, width), so that
 # squeue output can be turned into the records `scontrol show job` returns.
-# squeue pads and truncates each field to its width, so these are generous;
-# the job name goes last, since it is the only one which may contain the "|"
-# delimiter.
+# squeue pads and truncates each field to its width, so these are generous.
 _SQUEUE_FIELDS = (
     ("JobId", "jobid", 24),
     ("Partition", "partition", 24),
     ("UserId", "username", 24),
     ("JobState", "state", 16),
     ("StartTime", "starttime", 24),
+    ("SubmitTime", "submittime", 24),
     ("Nice", "nice", 12),
     ("NumNodes", "numnodes", 10),
     ("NodeList", "nodelist", 64),
+    ("ReqNodeList", "reqnodes", 64),
     ("TresPerNode", "tres-per-node", 48),
     ("Reason", "reason", 32),
     ("NumCPUs", "numcpus", 10),
     ("AllocTRES", "tres-alloc", 128),
+    ("Command", "command", 256),
     ("JobName", "name", 256),
 )
 
@@ -60,6 +65,10 @@ class Job:
     state_reason: str
     cpus: int
     tres_alloc: str  # Total allocated TRES, e.g. "cpu=64,mem=375G,gres/gpu=4"
+    tres_req: str  # TRES the job asked for, in the same format
+    submit_time: int
+    req_nodes: str  # Nodes the job explicitly asked for, if any
+    command: str
 
     @property
     def partitions(self) -> list[str]:
@@ -83,6 +92,16 @@ class Job:
         now = int(time.time())
         diff = now - self.start_time
         return str(datetime.timedelta(seconds=diff))
+
+    @property
+    def time_queued(self) -> str:
+        """Returns how long the job has been queued, formatted as H:MM:SS."""
+        if not self.submit_time:
+            return "-"
+
+        return str(
+            datetime.timedelta(seconds=int(time.time()) - self.submit_time)
+        )
 
     @staticmethod
     def _parse_memory(mem_str: str) -> int:
@@ -121,7 +140,16 @@ class Job:
         return res
 
     def get_resources_total(self) -> dict:
-        """Parses tres_alloc into a dictionary {type: count} for the whole job.
+        """Returns the resources allocated to the job, as {type: count}."""
+        return Job._parse_tres(self.tres_alloc)
+
+    def get_resources_requested(self) -> dict:
+        """Returns the resources the job asked for, as {type: count}."""
+        return Job._parse_tres(self.tres_req)
+
+    @staticmethod
+    def _parse_tres(tres: str) -> dict:
+        """Parses a TRES string into a dictionary {type: count}.
 
         Memory is converted to MB.
 
@@ -130,7 +158,7 @@ class Job:
                 -> {'cpu': 64, 'mem': 384000, 'node': 1, 'gpu': 4}
         """
         res = {}
-        for part in self.tres_alloc.split(","):
+        for part in tres.split(","):
             key, _, val = part.partition("=")
             key = key.rsplit("/", 1)[-1]  # "gres/gpu" -> "gpu"
             if key == "mem":
@@ -162,14 +190,21 @@ class Job:
         """
         state = scontrol.get(data, "JobState", "UNKNOWN")
 
-        # Older Slurm versions report the allocation as "TRES" instead, and
-        # squeue reports what a pending job *asked* for; nothing is actually
-        # allocated until the job runs.
+        # Older Slurm versions report the allocation as "TRES" instead.
         tres_alloc = scontrol.get(data, "AllocTRES") or scontrol.get(
             data, "TRES"
         )
+
+        # Nothing is allocated until a job runs, and squeue reports what a
+        # pending job asked for in place of its (empty) allocation.
+        tres_req = scontrol.get(data, "ReqTRES")
         if state == "PENDING":
+            tres_req = tres_req or tres_alloc
             tres_alloc = ""
+        else:
+            # squeue cannot report the request once a job has started, so it is
+            # dropped here too, to keep the two sources equivalent.
+            tres_req = ""
 
         return cls(
             job_id=Job._parse_job_id(scontrol.get(data, "JobId")),
@@ -186,6 +221,10 @@ class Job:
             state_reason=scontrol.get(data, "Reason", "None"),
             cpus=scontrol.get_int(data, "NumCPUs"),
             tres_alloc=tres_alloc,
+            tres_req=tres_req,
+            submit_time=scontrol.get_time(data, "SubmitTime"),
+            req_nodes=scontrol.get(data, "ReqNodeList"),
+            command=scontrol.get(data, "Command"),
         )
 
 
@@ -203,9 +242,12 @@ def _squeue_records(partition: str | None) -> list[dict[str, str]] | None:
     Returns:
         One record per job, or None if squeue could not supply these fields.
     """
-    # Every field but the last is suffixed with the "|" delimiter.
-    fields = [f"{field}:{width}|" for _, field, width in _SQUEUE_FIELDS]
-    fields[-1] = fields[-1].rstrip("|")
+    # Every field but the last is suffixed with the separator.
+    fields = [
+        f"{field}:{width}{_SQUEUE_SEPARATOR}"
+        for _, field, width in _SQUEUE_FIELDS
+    ]
+    fields[-1] = fields[-1].rstrip(_SQUEUE_SEPARATOR)
 
     command = ["squeue", "--noheader", "--Format=" + ",".join(fields)]
     if partition is not None:
@@ -221,7 +263,7 @@ def _squeue_records(partition: str | None) -> list[dict[str, str]] | None:
     keys = [key for key, _, _ in _SQUEUE_FIELDS]
     records = []
     for line in output.splitlines():
-        values = line.split("|", len(keys) - 1)
+        values = line.split(_SQUEUE_SEPARATOR, len(keys) - 1)
         if len(values) == len(keys):
             records.append(dict(zip(keys, (v.strip() for v in values))))
     return records
