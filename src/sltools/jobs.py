@@ -333,12 +333,19 @@ def _get_smart_diff(s1: str, s2: str) -> tuple[str, str, str, str] | None:
     return final_prefix, final_diff1, final_diff2, final_suffix
 
 
-def get_jobs() -> list[Job]:
-    """Fetches jobs from squeue and calls sort_jobs."""
+def get_jobs(include_invalid: bool = False) -> list[Job]:
+    """Fetches jobs from squeue and calls sort_jobs.
+
+    Args:
+        include_invalid: Whether to include jobs which can never run, i.e. jobs
+            whose dependencies can never be satisfied.
+    """
     output = subprocess.check_output(["squeue", "--json"], text=True)
     data = json.loads(output)
 
     jobs = [Job.from_dict(j) for j in data.get("jobs", [])]
+    if not include_invalid:
+        jobs = [j for j in jobs if j.state_reason != "DependencyNeverSatisfied"]
     return sort_jobs(jobs)
 
 
