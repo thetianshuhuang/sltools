@@ -233,7 +233,10 @@ def render(jobs: List[Job], nodes: List[Node], slurm_version: str) -> Panel:
 
 
 def main(
-    refresh: float = 1.0, merge: bool = False, include_invalid: bool = False
+    refresh: float = 1.0,
+    merge: bool = False,
+    include_invalid: bool = False,
+    partition: str | None = None,
 ) -> int:
     """sltop: A top-like queue viewer for Slurm.
 
@@ -242,6 +245,7 @@ def main(
         merge: Whether to merge similar jobs.
         include_invalid: Also show jobs which can never run, i.e. jobs whose
             dependencies can never be satisfied.
+        partition: Only show jobs and nodes in this partition.
     """
     console = Console()
     slurm_version = get_slurm_version()
@@ -254,10 +258,12 @@ def main(
     try:
         with Live(console=console, screen=True, auto_refresh=False) as live:
             while True:
-                jobs = get_jobs(include_invalid=include_invalid)
+                jobs = get_jobs(
+                    include_invalid=include_invalid, partition=partition
+                )
                 if merge:
                     jobs = coalesce_jobs(jobs)
-                nodes = get_nodes()
+                nodes = get_nodes(partition=partition)
                 panel = render(jobs, nodes, slurm_version)
                 live.update(panel, refresh=True)
 

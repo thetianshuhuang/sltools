@@ -1,10 +1,24 @@
-"""Module interacting with Slurm via squeue."""
+"""Module interacting with Slurm via scontrol to get job info."""
 
 import dataclasses
 import datetime
-import json
-import subprocess
 import time
+
+from . import scontrol
+
+# Base states which Slurm considers finished; scontrol keeps reporting these
+# jobs for a few minutes after they complete, but squeue hides them by default.
+_FINISHED_STATES = {
+    "BOOT_FAIL",
+    "CANCELLED",
+    "COMPLETED",
+    "DEADLINE",
+    "FAILED",
+    "NODE_FAIL",
+    "OUT_OF_MEMORY",
+    "PREEMPTED",
+    "TIMEOUT",
+}
 
 
 @dataclasses.dataclass
@@ -24,6 +38,11 @@ class Job:
     state_reason: str
     cpus: int
     memory: int  # Total memory in MB
+
+    @property
+    def partitions(self) -> list[str]:
+        """Returns the partitions the job may run in."""
+        return self.partition.split(",")
 
     @property
     def time_used(self) -> str:
@@ -83,60 +102,40 @@ class Job:
                     pass
         return res
 
+    @staticmethod
+    def _parse_job_id(job_id: str) -> int:
+        """Parses a job ID, e.g. "12345", or "12345_7" for job array tasks."""
+        try:
+            return int(job_id.split("_")[0])
+        except ValueError:
+            return 0
+
     @classmethod
-    def from_dict(cls, data: dict) -> "Job":
-        """Creates a Job instance from a dictionary (from squeue JSON output).
+    def from_record(cls, data: dict) -> "Job":
+        """Creates a Job instance from a `scontrol show job` record.
 
         Args:
-            data: Dictionary containing job information from squeue.
+            data: Dictionary containing job information from scontrol.
 
         Returns:
             A Job instance with parsed and validated data.
         """
-        # Parse node_count
-        node_count = 0
-        if "node_count" in data and isinstance(data["node_count"], dict):
-            node_count = data["node_count"].get("number", 0)
-
-        # Parse job_state (it's a list)
-        state = "UNKNOWN"
-        if (
-            "job_state" in data
-            and isinstance(data["job_state"], list)
-            and len(data["job_state"]) > 0
-        ):
-            state = data["job_state"][0]
-
-        # Parse start_time
-        start_time = 0
-        if "start_time" in data and isinstance(data["start_time"], dict):
-            start_time = data["start_time"].get("number", 0)
-
-        # Parse CPUs
-        cpus = 0
-        if "cpus" in data and isinstance(data["cpus"], dict):
-            cpus = data["cpus"].get("number", 0)
-
-        # Parse memory from tres_alloc_str (e.g., mem=720000M)
-        memory = 0
-        tres_alloc = data.get("tres_alloc_str", "")
-        if tres_alloc:
-            memory = Job._parse_memory_from_tres(tres_alloc)
-
         return cls(
-            job_id=data.get("job_id", 0),
-            partition=data.get("partition", ""),
-            name=data.get("name", ""),
-            user_name=data.get("user_name", ""),
-            job_state=state,
-            start_time=start_time,
-            nice=data.get("nice", 0),
-            node_count=node_count,
-            nodelist=data.get("nodes", ""),
-            tres_per_node=data.get("tres_per_node", ""),
-            state_reason=data.get("state_reason", ""),
-            cpus=cpus,
-            memory=memory,
+            job_id=Job._parse_job_id(scontrol.get(data, "JobId")),
+            partition=scontrol.get(data, "Partition"),
+            name=scontrol.get(data, "JobName"),
+            # "UserId=alice(1000)" -> "alice"
+            user_name=scontrol.get(data, "UserId").split("(")[0],
+            job_state=scontrol.get(data, "JobState", "UNKNOWN"),
+            start_time=scontrol.get_time(data, "StartTime"),
+            nice=scontrol.get_int(data, "Nice"),
+            node_count=scontrol.get_int(data, "NumNodes"),
+            nodelist=scontrol.get(data, "NodeList"),
+            tres_per_node=scontrol.get(data, "TresPerNode"),
+            state_reason=scontrol.get(data, "Reason", "None"),
+            cpus=scontrol.get_int(data, "NumCPUs"),
+            # Allocated TRES, e.g. "cpu=64,mem=375G,node=1,gres/gpu=4"
+            memory=Job._parse_memory_from_tres(scontrol.get(data, "AllocTRES")),
         )
 
 
@@ -333,17 +332,18 @@ def _get_smart_diff(s1: str, s2: str) -> tuple[str, str, str, str] | None:
     return final_prefix, final_diff1, final_diff2, final_suffix
 
 
-def get_jobs(include_invalid: bool = False) -> list[Job]:
-    """Fetches jobs from squeue and calls sort_jobs.
+def get_jobs(include_invalid: bool = False, partition: str | None = None) -> list[Job]:
+    """Fetches jobs from scontrol and calls sort_jobs.
 
     Args:
         include_invalid: Whether to include jobs which can never run, i.e. jobs
             whose dependencies can never be satisfied.
+        partition: If set, only include jobs in this partition.
     """
-    output = subprocess.check_output(["squeue", "--json"], text=True)
-    data = json.loads(output)
-
-    jobs = [Job.from_dict(j) for j in data.get("jobs", [])]
+    jobs = [Job.from_record(r) for r in scontrol.show("job")]
+    jobs = [j for j in jobs if j.job_state not in _FINISHED_STATES]
+    if partition is not None:
+        jobs = [j for j in jobs if partition in j.partitions]
     if not include_invalid:
         jobs = [j for j in jobs if j.state_reason != "DependencyNeverSatisfied"]
     return sort_jobs(jobs)

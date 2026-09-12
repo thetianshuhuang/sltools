@@ -1,9 +1,10 @@
 """Module interacting with Slurm via scontrol to get node info."""
 
 import dataclasses
-import json
 import re
 import subprocess
+
+from . import scontrol
 
 
 @dataclasses.dataclass
@@ -16,6 +17,7 @@ class Node:
     gpus: int
     architecture: str
     state: str
+    partitions: list[str]
 
     @staticmethod
     def _parse_gpu_count(gres_str: str) -> int:
@@ -38,8 +40,8 @@ class Node:
         return count
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Node":
-        """Creates a Node instance from a dictionary (from scontrol JSON output).
+    def from_record(cls, data: dict) -> "Node":
+        """Creates a Node instance from a `scontrol show node` record.
 
         Args:
             data: Dictionary containing node information from scontrol.
@@ -47,43 +49,26 @@ class Node:
         Returns:
             A Node instance with parsed and validated data.
         """
-        # Parse CPUs
-        cpus = data.get("cpus", 0)
-
-        # Parse memory
-        real_memory = data.get("real_memory")
-        if isinstance(real_memory, int):
-            memory = real_memory
-        elif isinstance(real_memory, dict):
-            memory = real_memory.get("number", 0)
-        else:
-            memory = 0
-
-        # Parse GPUs from GRES
-        gres = data.get("gres", "")
-        gpus = Node._parse_gpu_count(gres)
-
         return cls(
-            name=data.get("name", "unknown"),
-            cpus=cpus,
-            memory=memory,
-            gpus=gpus,
-            architecture=data.get("architecture", "unknown"),
-            state=data.get("state", "UNKNOWN"),
+            name=scontrol.get(data, "NodeName", "unknown"),
+            cpus=scontrol.get_int(data, "CPUTot"),
+            memory=scontrol.get_int(data, "RealMemory"),
+            gpus=Node._parse_gpu_count(scontrol.get(data, "Gres")),
+            architecture=scontrol.get(data, "Arch", "unknown"),
+            state=scontrol.get(data, "State", "UNKNOWN"),
+            partitions=scontrol.get_list(data, "Partitions"),
         )
 
 
-def get_nodes() -> list[Node]:
-    """Fetches nodes from scontrol."""
-    try:
-        output = subprocess.check_output(
-            ["scontrol", "show", "nodes", "--json"], text=True
-        )
-        data = json.loads(output)
-    except Exception:
-        return []
+def get_nodes(partition: str | None = None) -> list[Node]:
+    """Fetches nodes from scontrol.
 
-    nodes = [Node.from_dict(n) for n in data.get("nodes", [])]
+    Args:
+        partition: If set, only include nodes in this partition.
+    """
+    nodes = [Node.from_record(r) for r in scontrol.show("node")]
+    if partition is not None:
+        nodes = [n for n in nodes if partition in n.partitions]
     nodes.sort(key=lambda x: x.name)
     return nodes
 
