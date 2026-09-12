@@ -20,8 +20,9 @@ from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
 
-from .jobs import Job, JobGroup, coalesce_jobs, get_jobs
-from .nodes import Node, expand_nodelist, get_nodes, get_slurm_version
+from .utils.coalesce import JobGroup, coalesce_jobs
+from .utils.jobs import Job, get_jobs
+from .utils.nodes import Node, expand_nodelist, get_nodes, get_slurm_version
 
 
 def format_resources(job: Job) -> str:
@@ -248,6 +249,7 @@ def main(
     """
     console = Console()
     slurm_version = get_slurm_version()
+    nodes = get_nodes(partition=partition)
 
     old_settings = None
     if sys.stdin.isatty():
@@ -262,7 +264,6 @@ def main(
                 )
                 if merge:
                     jobs = coalesce_jobs(jobs)
-                nodes = get_nodes(partition=partition)
                 panel = render(jobs, nodes, slurm_version)
                 live.update(panel, refresh=True)
 

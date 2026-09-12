@@ -6,10 +6,6 @@ import subprocess
 
 from . import scontrol
 
-# Node capacity does not change while sltop is running, and querying it is not
-# cheap on a large cluster, so it is only read once per process.
-_node_cache: list["Node"] = []
-
 
 @dataclasses.dataclass
 class Node:
@@ -65,24 +61,18 @@ class Node:
 
 
 def get_nodes(partition: str | None = None) -> list[Node]:
-    """Fetches nodes from scontrol, caching them for the life of the process.
+    """Fetches nodes from scontrol.
 
-    Nodes which are added, removed or resized are only picked up on a relaunch.
+    This is not cheap on a large cluster, and node capacity does not change, so
+    callers which refresh in a loop should fetch nodes once instead.
 
     Args:
         partition: If set, only include nodes in this partition.
     """
-    global _node_cache
-
-    # An empty cache is also the failure case, so it is retried.
-    if not _node_cache:
-        nodes = [Node.from_record(r) for r in scontrol.show("node")]
-        nodes.sort(key=lambda x: x.name)
-        _node_cache = nodes
-
-    nodes = _node_cache
+    nodes = [Node.from_record(r) for r in scontrol.show("node")]
     if partition is not None:
         nodes = [n for n in nodes if partition in n.partitions]
+    nodes.sort(key=lambda x: x.name)
     return nodes
 
 
